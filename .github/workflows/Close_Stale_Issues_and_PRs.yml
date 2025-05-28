@@ -16,3 +16,4 @@ jobs:
           exempt-issue-labels: 'planned,bug'
           days-before-stale: 9
           days-before-close: 5
+          days-before-close: 5

@@ -1,16 +1,14 @@
-import { Button } from "@mui/material";
-import { CippTablePage } from "/src/components/CippComponents/CippTablePage.jsx";
 import { Layout as DashboardLayout } from "/src/layouts/index.js";
-import { AddBox, RocketLaunch, Delete, GitHub, Edit } from "@mui/icons-material";
+import { Button } from "@mui/material";
 import Link from "next/link";
-import { CippCodeBlock } from "../../../../components/CippComponents/CippCodeBlock";
+import { RocketLaunch } from "@mui/icons-material";
+import { CippTablePage } from "/src/components/CippComponents/CippTablePage.jsx";
+import { TrashIcon } from "@heroicons/react/24/outline";
+import { GitHub, Edit } from "@mui/icons-material";
 import { ApiGetCall } from "/src/api/ApiCall";
-import { CippPropertyListCard } from "../../../../components/CippCards/CippPropertyListCard";
-import { getCippTranslation } from "../../../../utils/get-cipp-translation";
-import { getCippFormatting } from "../../../../utils/get-cipp-formatting";
 
 const Page = () => {
-  const pageTitle = "Group Templates";
+  const pageTitle = "Contact Templates";
   const integrations = ApiGetCall({
     url: "/api/ListExtensionsConfig",
     queryKey: "Integrations",
@@ -18,11 +16,6 @@ const Page = () => {
     refetchOnReconnect: false,
   });
   const actions = [
-    {
-      label: "Edit Template",
-      icon: <Edit />,
-      link: "/identity/administration/group-templates/edit?id=[GUID]",
-    },
     {
       label: "Save to GitHub",
       type: "POST",
@@ -70,65 +63,52 @@ const Page = () => {
     {
       label: "Delete Template",
       type: "POST",
-      url: "/api/RemoveGroupTemplate",
-      icon: <Delete />,
+      url: "/api/RemoveContactTemplates",
       data: {
         ID: "GUID",
       },
       confirmText: "Do you want to delete the template?",
-      multiPost: false,
+      icon: <TrashIcon />,
+      color: "danger",
     },
+    {
+        label: "Edit Contact Template",
+        link: "/email/administration/contacts-template/edit?id=[GUID]",
+        icon: <Edit />,
+        color: "success",
+        target: "_self",
+      },
   ];
-
-  const offCanvas = {
-    children: (data) => {
-      const keys = Object.keys(data).filter(
-        (key) => !key.includes("@odata") && !key.includes("@data")
-      );
-      const properties = [];
-      keys.forEach((key) => {
-        if (data[key] && data[key].length > 0) {
-          properties.push({
-            label: getCippTranslation(key),
-            value: getCippFormatting(data[key], key),
-          });
-        }
-      });
-      return (
-        <CippPropertyListCard
-          cardSx={{ p: 0, m: -2 }}
-          title="Template Details"
-          propertyItems={properties}
-          actionItems={actions}
-          data={data}
-        />
-      );
-    },
-  };
+  const simpleColumns = ["name", "contactTemplateName", "GUID"];
 
   return (
     <CippTablePage
       title={pageTitle}
-      apiUrl="/api/ListGroupTemplates"
-      queryKey="ListGroupTemplates"
-      tenantInTitle={false}
+      apiUrl="/api/ListContactTemplates"
+      queryKey="Contact Templates"
       actions={actions}
+      simpleColumns={simpleColumns}
       cardButton={
         <>
-          <Button component={Link} href="group-templates/add" startIcon={<AddBox />}>
-            Add Group Template
+          <Button
+            component={Link}
+            href="/email/administration/contacts-template/deploy"
+            startIcon={<RocketLaunch />}
+          >
+            Deploy Contact Template
           </Button>
-          <Button component={Link} href="group-templates/deploy" startIcon={<RocketLaunch />}>
-            Deploy Group Template
+          <Button
+            component={Link}
+            href="/email/administration/contacts-template/add"
+            startIcon={<RocketLaunch />}
+          >
+            New Contact Template
           </Button>
         </>
       }
-      offCanvas={offCanvas}
-      simpleColumns={["displayName", "description", "groupType", "GUID"]}
     />
   );
 };
 
 Page.getLayout = (page) => <DashboardLayout>{page}</DashboardLayout>;
-
 export default Page;

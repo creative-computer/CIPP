@@ -294,8 +294,7 @@
         "buildProperties": {
           "appLocation": "/",
           "apiLocation": "",
-
-          "appArtifactLocation": ""
+          "appArtifactLocation": "",
           "outputLocation": "/out"
         }
       },

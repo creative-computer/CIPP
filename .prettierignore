@@ -1,4 +1,9 @@
+<<<<<<< HEAD
 dist/
 build/
 importsMap.jsx
 Generate-Import-Map.js
+=======
+build
+out
+>>>>>>> upstream/dev

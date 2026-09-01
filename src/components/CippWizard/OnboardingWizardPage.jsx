@@ -12,7 +12,13 @@ import { CippDirectTenantDeploy } from './CippDirectTenantDeploy.jsx'
 import { CippGDAPTenantSetup } from './CippGDAPTenantSetup.jsx'
 import { CippIndirectResellerLink } from './CippIndirectResellerLink.jsx'
 import { CippGDAPTenantOnboarding } from './CippGDAPTenantOnboarding.jsx'
-import { BuildingOfficeIcon, CloudIcon, CpuChipIcon } from '@heroicons/react/24/outline'
+import { CippCertificateAuthStep } from './CippCertificateAuthStep.jsx'
+import {
+  BuildingOfficeIcon,
+  CloudIcon,
+  CpuChipIcon,
+  KeyIcon,
+} from '@heroicons/react/24/outline'
 import { useRouter } from 'next/router'
 
 const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
@@ -24,7 +30,9 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
     : selectedOptionQuery
 
   const tenantTypeQuery = router.query?.tenantType
-  const deepLinkedTenantType = Array.isArray(tenantTypeQuery) ? tenantTypeQuery[0] : tenantTypeQuery
+  const deepLinkedTenantType = Array.isArray(tenantTypeQuery)
+    ? tenantTypeQuery[0]
+    : tenantTypeQuery
 
   const setupOptions = [
     {
@@ -35,7 +43,8 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
       value: 'FirstSetup',
     },
     {
-      description: 'Choose this option if you would like to add a tenant to your environment.',
+      description:
+        'Choose this option if you would like to add a tenant to your environment.',
       icon: <CpuChipIcon />,
       label: 'Add a tenant',
       value: 'AddTenant',
@@ -44,11 +53,13 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
       description:
         'Choose this option if you want to setup which application registration is used to connect to your tenants.',
       icon: <CpuChipIcon />,
-      label: 'Create a new application registration for me and connect to my tenants',
+      label:
+        'Create a new application registration for me and connect to my tenants',
       value: 'CreateApp',
     },
     {
-      description: "I would like to refresh my token or replace the account I've used.",
+      description:
+        "I would like to refresh my token or replace the account I've used.",
       icon: <CloudIcon />,
       label: 'Refresh Tokens for existing application registration',
       value: 'UpdateTokens',
@@ -60,6 +71,13 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
       label: 'Manually enter credentials',
       value: 'Manual',
     },
+    {
+      description:
+        'Switch an existing setup to authenticate with the SAM certificate instead of the client secret. The client secret is kept as a rollback.',
+      icon: <KeyIcon />,
+      label: 'Use certificate authentication',
+      value: 'CertificateAuth',
+    },
   ]
 
   // On the blocking first-run gate, AddTenant and CreateApp are noise: both need an
@@ -67,7 +85,11 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
   // an app registration already exists (credentials stored but the token is dead).
   const visibleOptions = isSetupGate
     ? setupOptions.filter((option) =>
-        ['FirstSetup', 'Manual', ...(samAppPresent ? ['UpdateTokens'] : [])].includes(option.value)
+        [
+          'FirstSetup',
+          'Manual',
+          ...(samAppPresent ? ['UpdateTokens'] : []),
+        ].includes(option.value)
       )
     : setupOptions
 
@@ -91,7 +113,7 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
       componentProps: {
         title: 'Select your setup method',
         subtext:
-          'This wizard will guide you through setting up CIPPs access to your client tenants. If this is your first time setting up CIPP you will want to choose the option "Create application for me and connect to my tenants".',
+          'This wizard will guide you through setting up CIPPs access to your client tenants. If this is your first time setting up CIPP you will want to choose the option "First Setup".',
         valuesKey: 'SyncTool',
         options: visibleOptions,
       },
@@ -100,24 +122,28 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
       description: 'Application',
       component: CippSAMDeploy,
       showStepWhen: (values) =>
-        values?.selectedOption === 'CreateApp' || values?.selectedOption === 'FirstSetup',
+        values?.selectedOption === 'CreateApp' ||
+        values?.selectedOption === 'FirstSetup',
     },
     {
       description: 'Tenants',
       component: CippTenantModeDeploy,
       showStepWhen: (values) =>
-        values?.selectedOption === 'CreateApp' || values?.selectedOption === 'FirstSetup',
+        values?.selectedOption === 'CreateApp' ||
+        values?.selectedOption === 'FirstSetup',
     },
     {
       description: 'Tenant Type',
       component: CippAddTenantTypeSelection,
-      showStepWhen: (values) => values?.selectedOption === 'AddTenant' && !hasDeepLinkedTenantType,
+      showStepWhen: (values) =>
+        values?.selectedOption === 'AddTenant' && !hasDeepLinkedTenantType,
     },
     {
       description: 'Direct Tenant',
       component: CippDirectTenantDeploy,
       showStepWhen: (values) =>
-        values?.selectedOption === 'AddTenant' && values?.tenantType === 'Direct',
+        values?.selectedOption === 'AddTenant' &&
+        values?.tenantType === 'Direct',
     },
     {
       description: 'GDAP Setup',
@@ -129,7 +155,8 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
       description: 'Reseller Link',
       component: CippIndirectResellerLink,
       showStepWhen: (values) =>
-        values?.selectedOption === 'AddTenant' && values?.tenantType === 'IndirectReseller',
+        values?.selectedOption === 'AddTenant' &&
+        values?.tenantType === 'IndirectReseller',
     },
     {
       description: 'GDAP Onboarding',
@@ -165,6 +192,11 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
       showStepWhen: (values) => values?.selectedOption === 'Manual',
     },
     {
+      description: 'Certificate Authentication',
+      component: CippCertificateAuthStep,
+      showStepWhen: (values) => values?.selectedOption === 'CertificateAuth',
+    },
+    {
       description: 'Confirmation',
       component: CippWizardConfirmation,
     },
@@ -181,7 +213,9 @@ const OnboardingWizardPage = ({ mode, samAppPresent, completionButton }) => {
         hasDeepLinkedOption
           ? {
               selectedOption: deepLinkedOption,
-              ...(hasDeepLinkedTenantType && { tenantType: deepLinkedTenantType }),
+              ...(hasDeepLinkedTenantType && {
+                tenantType: deepLinkedTenantType,
+              }),
             }
           : undefined
       }

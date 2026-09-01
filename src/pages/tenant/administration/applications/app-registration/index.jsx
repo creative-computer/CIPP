@@ -14,6 +14,7 @@ import {
   Badge,
 } from '@mui/icons-material'
 import { HeaderedTabbedLayout } from '../../../../../layouts/HeaderedTabbedLayout'
+import { CippAppRegistrationSwitcher } from '../../../../../components/CippComponents/CippAppRegistrationSwitcher'
 import tabOptions from './tabOptions'
 import { CippCopyToClipBoard } from '../../../../../components/CippComponents/CippCopyToClipboard'
 import { Box, Stack } from '@mui/system'
@@ -21,7 +22,7 @@ import { Grid } from '@mui/system'
 import { Typography, Card, CardHeader, Divider, Button, SvgIcon } from '@mui/material'
 import { CippBannerListCard } from '../../../../../components/CippCards/CippBannerListCard'
 import { CippTimeAgo } from '../../../../../components/CippComponents/CippTimeAgo'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { PropertyList } from '../../../../../components/property-list'
 import { PropertyListItem } from '../../../../../components/property-list-item'
 import { CippHead } from '../../../../../components/CippComponents/CippHead'
@@ -84,6 +85,7 @@ const Page = () => {
   const appBulkRequest = ApiPostCall({
     urlFromData: true,
   })
+  const bulkFetchedForId = useRef(null)
 
   function refreshFunction() {
     if (!applicationClientId || !appData?.id) return
@@ -100,11 +102,12 @@ const Page = () => {
       },
     ]
 
+    bulkFetchedForId.current = applicationClientId
     appBulkRequest.mutate({
       url: '/api/ListGraphBulkRequest',
       data: {
         Requests: requests,
-        tenantFilter: userSettingsDefaults.currentTenant,
+        tenantFilter: router.query.tenantFilter ?? userSettingsDefaults.currentTenant,
       },
     })
   }
@@ -115,7 +118,7 @@ const Page = () => {
       userSettingsDefaults.currentTenant &&
       appRequest.isSuccess &&
       appData?.id &&
-      !appBulkRequest.isSuccess
+      bulkFetchedForId.current !== applicationClientId
     ) {
       refreshFunction()
     }
@@ -124,7 +127,6 @@ const Page = () => {
     userSettingsDefaults.currentTenant,
     appRequest.isSuccess,
     appData?.id,
-    appBulkRequest.isSuccess,
   ])
 
   const bulkData = getListGraphBulkRequestRows(appBulkRequest)
@@ -212,6 +214,7 @@ const Page = () => {
                   icon: <EyeIcon />,
                   label: 'View User',
                   link: `/identity/administration/users/user?userId=[id]&tenantFilter=${userSettingsDefaults.currentTenant}`,
+                  pinned: true,
                   condition: (row) => row?.['@odata.type'] === '#microsoft.graph.user',
                 },
               ],
@@ -368,6 +371,13 @@ const Page = () => {
     <HeaderedTabbedLayout
       tabOptions={tabOptions}
       title={title}
+      titleControl={
+        <CippAppRegistrationSwitcher
+          title={title}
+          currentAppId={applicationClientId}
+          tenantFilter={router.query.tenantFilter ?? userSettingsDefaults.currentTenant}
+        />
+      }
       subtitle={subtitle}
       actions={appData ? appActions : []}
       actionsData={actionsData}
@@ -390,7 +400,7 @@ const Page = () => {
         >
           <CippHead title={title} />
           <Grid container spacing={2}>
-            <Grid size={4}>
+            <Grid size={{ xs: 12, lg: 4 }}>
               <Card>
                 <CardHeader title="Application Details" />
                 <Divider />
@@ -478,7 +488,7 @@ const Page = () => {
                 </PropertyList>
               </Card>
             </Grid>
-            <Grid size={8}>
+            <Grid size={{ xs: 12, lg: 8 }}>
               <Stack spacing={3}>
                 <Typography variant="h6">Credentials</Typography>
                 <CippBannerListCard

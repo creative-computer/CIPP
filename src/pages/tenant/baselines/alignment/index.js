@@ -65,6 +65,7 @@ import { CippDataTable } from '../../../../components/CippTable/CippDataTable'
 import { CippQueueTracker } from '../../../../components/CippTable/CippQueueTracker'
 import { CippHead } from '../../../../components/CippComponents/CippHead'
 import { CippInfoBar } from '../../../../components/CippCards/CippInfoBar'
+import { CippChartCard } from '../../../../components/CippCards/CippChartCard'
 import CippButtonCard from '../../../../components/CippCards/CippButtonCard'
 import { CippApiDialog } from '../../../../components/CippComponents/CippApiDialog'
 import { CippApiLogsDrawer } from '../../../../components/CippComponents/CippApiLogsDrawer'
@@ -83,6 +84,10 @@ import { parseCippDate } from '../../../../utils/parse-cipp-date'
 import { CippOffCanvas } from '../../../../components/CippComponents/CippOffCanvas'
 import { CippAutoComplete } from '../../../../components/CippComponents/CippAutocomplete'
 import CippJsonView from '../../../../components/CippFormPages/CippJSONView'
+
+// Manual-task instance keys are 'ManualTask#n', so match by prefix. standardName can be
+// absent on malformed or partially hydrated rows - the check must never throw.
+const isManualTaskRow = (row) => Boolean(row?.standardName?.startsWith('ManualTask'))
 
 const deviationColors = {
   Compliant: 'success',
@@ -116,29 +121,56 @@ const templatePolicySources = {
   },
 }
 
-const TierPolicyView = ({ variableKey, templateRef }) => {
+// templateIds names a different template store per standard, so these key on the
+// standard rather than the variable.
+const templateIdsPolicySources = {
+  IntuneAppTemplateDeploy: {
+    title: 'Application Template',
+    noun: 'Template',
+    url: '/api/ListAppTemplates',
+    queryKey: 'ListAppTemplates',
+    type: 'default',
+  },
+  AppDeploy: {
+    title: 'App Approval Template',
+    noun: 'Template',
+    url: '/api/ListAppApprovalTemplates',
+    queryKey: 'ListAppApprovalTemplates',
+    idField: 'TemplateId',
+    type: 'default',
+  },
+}
+
+const TierPolicyView = ({ source, templateRef }) => {
   const [visible, setVisible] = useState(false)
-  const source = templatePolicySources[variableKey]
   const templatesApi = ApiGetCall({
     url: source.url,
     queryKey: source.queryKey,
     waiting: visible,
   })
-  const rawRef =
-    templateRef && typeof templateRef === 'object'
-      ? templateRef.value
-      : templateRef
-  const entry = (templatesApi.data ?? []).find(
-    (template) => template.GUID === rawRef
+  // Multi-template deployers configure an array of refs; the classic template
+  // standards configure a single one. Refs are option objects or bare ids.
+  const rawRefs = (Array.isArray(templateRef) ? templateRef : [templateRef]).map(
+    (ref) => (ref && typeof ref === 'object' ? ref.value : ref)
   )
-  let policy = entry ?? null
-  if (entry && source.property) {
-    try {
-      policy = JSON.parse(entry[source.property])
-    } catch {
-      policy = entry
+  const idField = source.idField ?? 'GUID'
+  const entries = rawRefs
+    .map((ref) =>
+      (templatesApi.data ?? []).find((template) => template?.[idField] === ref)
+    )
+    .filter(Boolean)
+  const policies = entries.map((entry) => {
+    if (source.property) {
+      try {
+        return JSON.parse(entry[source.property])
+      } catch {
+        return entry
+      }
     }
-  }
+    return entry
+  })
+  const missingCount = rawRefs.length - entries.length
+  const noun = source.noun ?? 'Policy'
   return (
     <>
       <Button
@@ -147,7 +179,7 @@ const TierPolicyView = ({ variableKey, templateRef }) => {
         startIcon={<Visibility />}
         onClick={() => setVisible(true)}
       >
-        View Policy
+        View {rawRefs.length > 1 ? `${noun}s (${rawRefs.length})` : noun}
       </Button>
       <CippOffCanvas
         visible={visible}
@@ -157,8 +189,23 @@ const TierPolicyView = ({ variableKey, templateRef }) => {
       >
         {templatesApi.isFetching ? (
           <CircularProgress size={24} />
-        ) : policy ? (
-          <CippJsonView object={policy} defaultOpen={true} type={source.type} />
+        ) : policies.length > 0 ? (
+          <Stack spacing={2}>
+            {policies.map((policy, index) => (
+              <CippJsonView
+                key={rawRefs[index] ?? index}
+                object={policy}
+                defaultOpen={true}
+                type={source.type}
+              />
+            ))}
+            {missingCount > 0 && (
+              <Typography variant="body2" color="text.secondary">
+                {missingCount} of the configured {noun.toLowerCase()}s could not
+                be found - possibly deleted from the template library.
+              </Typography>
+            )}
+          </Stack>
         ) : (
           <Typography variant="body2" color="text.secondary">
             The template could not be found - it may have been deleted from the
@@ -556,6 +603,13 @@ const Page = () => {
   })
 
   const catalog = definitionsApi.data ?? []
+  // A per-path deny queues an OBJECT deletion, so it only exists where the
+  // definition ships a delete executor (the detect-drift standards, where each
+  // path IS a policy). Ordinary standards get accept-only per-property actions -
+  // enforcing the baseline is the row-level Deny.
+  const supportsPathDeletion = (standardName) =>
+    !!catalog.find((entry) => entry.name === `${standardName}`.split('#')[0])
+      ?.delete
   const baselines = baselinesApi.data ?? []
   const standardAggregates = aggregateApi.data?.standards ?? []
   const tenant = {
@@ -643,9 +697,8 @@ const Page = () => {
       // value regardless of the current state, and a license bought after the last run
       // should not block trying. Manual tasks have nothing to deploy; a Conflict has no
       // unambiguous expected value to deploy.
-      condition: (row) =>
-        !row.standardName.startsWith('ManualTask') && row.status !== 'Conflict',
-      hideCondition: (row) => row.standardName.startsWith('ManualTask'),
+      condition: (row) => !isManualTaskRow(row) && row.status !== 'Conflict',
+      hideCondition: (row) => isManualTaskRow(row),
       bulkFilterEligible: true,
     },
     {
@@ -666,9 +719,8 @@ const Page = () => {
       relatedQueryKeys,
       // Manual tasks are completed, not triaged.
       condition: (row) =>
-        ['Drift', 'Partially Accepted'].includes(row.status) &&
-        !row.standardName.startsWith('ManualTask'),
-      hideCondition: (row) => row.standardName.startsWith('ManualTask'),
+        ['Drift', 'Partially Accepted'].includes(row.status) && !isManualTaskRow(row),
+      hideCondition: (row) => isManualTaskRow(row),
       bulkFilterEligible: true,
     },
     {
@@ -698,9 +750,8 @@ const Page = () => {
       multiPost: false,
       relatedQueryKeys,
       condition: (row) =>
-        ['Drift', 'Partially Accepted'].includes(row.status) &&
-        !row.standardName.startsWith('ManualTask'),
-      hideCondition: (row) => row.standardName.startsWith('ManualTask'),
+        ['Drift', 'Partially Accepted'].includes(row.status) && !isManualTaskRow(row),
+      hideCondition: (row) => isManualTaskRow(row),
       bulkFilterEligible: true,
     },
     {
@@ -724,8 +775,8 @@ const Page = () => {
         (['Accepted', 'Partially Accepted'].includes(row.status) ||
           row.status?.startsWith('Denied') ||
           Object.keys(row.acceptedPaths ?? {}).length > 0) &&
-        !row.standardName.startsWith('ManualTask'),
-      hideCondition: (row) => row.standardName.startsWith('ManualTask'),
+        !isManualTaskRow(row),
+      hideCondition: (row) => isManualTaskRow(row),
       bulkFilterEligible: true,
     },
     {
@@ -743,10 +794,8 @@ const Page = () => {
         'Mark the manual task [standardLabel] as completed for [tenantFilter]? A new deviation is raised again on the configured recurrence.',
       multiPost: false,
       relatedQueryKeys,
-      // Instance keys are 'ManualTask#n' - an exact match missed every instance but the first.
-      condition: (row) =>
-        row.standardName.startsWith('ManualTask') && row.status === 'Drift',
-      hideCondition: (row) => !row.standardName.startsWith('ManualTask'),
+      condition: (row) => isManualTaskRow(row) && row.status === 'Drift',
+      hideCondition: (row) => !isManualTaskRow(row),
       bulkFilterEligible: true,
     },
     {
@@ -800,7 +849,7 @@ const Page = () => {
           Object.keys(standard?.variables ?? {}).length > 0
         )
       },
-      hideCondition: (row) => row.standardName.startsWith('ManualTask'),
+      hideCondition: (row) => isManualTaskRow(row),
     },
     {
       label: 'Remove Tenant Override',
@@ -819,7 +868,7 @@ const Page = () => {
       multiPost: false,
       relatedQueryKeys,
       condition: (row) => row.sourceTemplate === 'Tenant Override',
-      hideCondition: (row) => row.standardName.startsWith('ManualTask'),
+      hideCondition: (row) => isManualTaskRow(row),
     },
   ]
 
@@ -840,7 +889,7 @@ const Page = () => {
       multiPost: false,
       relatedQueryKeys,
       // Manual tasks have nothing to deploy - operators complete them instead.
-      hideCondition: (row) => row.standardName.startsWith('ManualTask'),
+      hideCondition: (row) => isManualTaskRow(row),
     },
     {
       label: 'Mark Task Complete (All Tenants)',
@@ -857,7 +906,7 @@ const Page = () => {
         'Mark the manual task [standardLabel] as completed for every applicable tenant? Each tenant raises it again on the configured recurrence.',
       multiPost: false,
       relatedQueryKeys,
-      hideCondition: (row) => !row.standardName.startsWith('ManualTask'),
+      hideCondition: (row) => !isManualTaskRow(row),
     },
     {
       label: 'Compare All Tenants',
@@ -878,6 +927,7 @@ const Page = () => {
     {
       label: 'Edit Baseline',
       link: '/tenant/baselines/template?id=[templateId]',
+      pinned: true,
       icon: <Edit />,
       color: 'success',
       target: '_self',
@@ -1116,14 +1166,25 @@ const Page = () => {
                 {tier.value?.intuneTemplate || tier.value?.caTemplate ? (
                   <Box sx={{ mt: 1 }}>
                     <TierPolicyView
-                      variableKey={
-                        tier.value?.intuneTemplate
-                          ? 'intuneTemplate'
-                          : 'caTemplate'
+                      source={
+                        templatePolicySources[
+                          tier.value?.intuneTemplate
+                            ? 'intuneTemplate'
+                            : 'caTemplate'
+                        ]
                       }
                       templateRef={
                         tier.value?.intuneTemplate ?? tier.value?.caTemplate
                       }
+                    />
+                  </Box>
+                ) : templateIdsPolicySources[row.standardName] &&
+                  Array.isArray(tier.value?.templateIds) &&
+                  tier.value.templateIds.length > 0 ? (
+                  <Box sx={{ mt: 1 }}>
+                    <TierPolicyView
+                      source={templateIdsPolicySources[row.standardName]}
+                      templateRef={tier.value.templateIds}
                     />
                   </Box>
                 ) : (
@@ -1309,23 +1370,24 @@ const Page = () => {
                             Accept this property only
                           </Button>
                         )}
-                        {!acceptedPath && (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="error"
-                            startIcon={<RemoveCircle />}
-                            onClick={() => {
-                              setDenyPathTarget({
-                                ...row,
-                                path: entry.Property,
-                              })
-                              denyPathDialog.handleOpen()
-                            }}
-                          >
-                            Deny & queue deletion
-                          </Button>
-                        )}
+                        {!acceptedPath &&
+                          supportsPathDeletion(row.standardName) && (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="error"
+                              startIcon={<RemoveCircle />}
+                              onClick={() => {
+                                setDenyPathTarget({
+                                  ...row,
+                                  path: entry.Property,
+                                })
+                                denyPathDialog.handleOpen()
+                              }}
+                            >
+                              Deny & queue deletion
+                            </Button>
+                          )}
                       </Stack>
                     </Box>
                   )
@@ -1469,20 +1531,22 @@ const Page = () => {
                             Accept this property only
                           </Button>
                         )}
-                        {drifted && !acceptedPath && (
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="error"
-                            startIcon={<RemoveCircle />}
-                            onClick={() => {
-                              setDenyPathTarget({ ...row, path: key })
-                              denyPathDialog.handleOpen()
-                            }}
-                          >
-                            Deny & queue deletion
-                          </Button>
-                        )}
+                        {drifted &&
+                          !acceptedPath &&
+                          supportsPathDeletion(row.standardName) && (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="error"
+                              startIcon={<RemoveCircle />}
+                              onClick={() => {
+                                setDenyPathTarget({ ...row, path: key })
+                                denyPathDialog.handleOpen()
+                              }}
+                            >
+                              Deny & queue deletion
+                            </Button>
+                          )}
                       </Stack>
                     </Box>
                   )
@@ -1672,6 +1736,32 @@ const Page = () => {
               : 'None',
           },
         ])}
+        {/* A single point is just today's live score (already listed above) - the
+            chart earns its space once there is an actual line to draw. */}
+        {Array.isArray(row.trend) && row.trend.length > 1 && (
+          <Box sx={{ px: 2, pt: 2 }}>
+            <CippChartCard
+              title="Compliance Trend"
+              chartType="area"
+              chartSeries={[
+                {
+                  name: 'Compliant with accepted deviations',
+                  data: row.trend.map((point) => ({
+                    x: point.date,
+                    y: point.aligned,
+                  })),
+                },
+                {
+                  name: 'Compliant with baseline',
+                  data: row.trend.map((point) => ({
+                    x: point.date,
+                    y: point.verified,
+                  })),
+                },
+              ]}
+            />
+          </Box>
+        )}
         <Stack spacing={1.5} sx={{ p: 2 }}>
           <Typography
             variant="caption"
@@ -1800,6 +1890,7 @@ const Page = () => {
     {
       label: 'Edit Baseline',
       link: '/tenant/baselines/template?id=[GUID]',
+      pinned: true,
       icon: <Edit />,
       color: 'success',
       target: '_self',
@@ -3091,3 +3182,4 @@ Page.getLayout = (page) => (
 )
 
 export default Page
+

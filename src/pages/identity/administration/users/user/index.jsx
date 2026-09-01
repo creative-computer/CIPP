@@ -2,7 +2,6 @@ import { Layout as DashboardLayout } from '../../../../../layouts/index.js'
 import { useSettings } from '../../../../../hooks/use-settings'
 import { useRouter } from 'next/router'
 import { ApiGetCall, ApiPostCall } from '../../../../../api/ApiCall'
-import CippFormSkeleton from '../../../../../components/CippFormPages/CippFormSkeleton'
 import CalendarIcon from '@heroicons/react/24/outline/CalendarIcon'
 import {
   AdminPanelSettings,
@@ -31,11 +30,13 @@ import { CippCopyToClipBoard } from '../../../../../components/CippComponents/Ci
 import { Box, Stack } from '@mui/system'
 import { Grid } from '@mui/system'
 import { CippUserInfoCard } from '../../../../../components/CippCards/CippUserInfoCard'
+import { CippUserSwitcher } from '../../../../../components/CippComponents/CippUserSwitcher'
 import { SvgIcon, Typography } from '@mui/material'
 import { CippBannerListCard } from '../../../../../components/CippCards/CippBannerListCard'
 import { CippTimeAgo } from '../../../../../components/CippComponents/CippTimeAgo'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState, useRef } from 'react'
 import { useCippUserActions } from '../../../../../components/CippComponents/CippUserActions'
+import { useCippRoleAssignmentActions } from '../../../../../components/CippComponents/CippRoleAssignmentActions'
 import { EyeIcon, PencilIcon } from '@heroicons/react/24/outline'
 import { CippDataTable } from '../../../../../components/CippTable/CippDataTable'
 import dynamic from 'next/dynamic'
@@ -287,6 +288,16 @@ const Page = () => {
   const userBulkRequest = ApiPostCall({
     urlFromData: true,
   })
+  const bulkFetchedForId = useRef(null)
+
+  const roleAssignments = ApiGetCall({
+    url: `/api/ListRoleAssignments?principalId=${userId}&tenantFilter=${
+      router.query.tenantFilter ?? userSettingsDefaults.currentTenant
+    }`,
+    queryKey: `ListRoleAssignments-${userId}`,
+    waiting: waiting,
+  })
+  const roleAssignmentActions = useCippRoleAssignmentActions()
 
   const userPrincipalName = userRequest.data?.[0]?.userPrincipalName
 
@@ -323,11 +334,12 @@ const Page = () => {
       })
     }
 
+    bulkFetchedForId.current = userId
     userBulkRequest.mutate({
       url: '/api/ListGraphBulkRequest',
       data: {
         Requests: requests,
-        tenantFilter: userSettingsDefaults.currentTenant,
+        tenantFilter: router.query.tenantFilter ?? userSettingsDefaults.currentTenant,
         noPaginateIds: ['signInLogs', 'signInPreferences'],
       },
     })
@@ -338,7 +350,7 @@ const Page = () => {
       userId &&
       userSettingsDefaults.currentTenant &&
       userRequest.isSuccess &&
-      !userBulkRequest.isSuccess
+      bulkFetchedForId.current !== userId
     ) {
       refreshFunction()
     }
@@ -346,7 +358,6 @@ const Page = () => {
     userId,
     userSettingsDefaults.currentTenant,
     userRequest.isSuccess,
-    userBulkRequest.isSuccess,
   ])
 
   const bulkData = userBulkRequest?.data?.data ?? []
@@ -490,7 +501,7 @@ const Page = () => {
             <>
               <Typography variant="h6">Location</Typography>
               <Grid container spacing={2}>
-                <Grid size={8}>
+                <Grid size={{ xs: 12, md: 8 }}>
                   <CippMap
                     markers={[
                       {
@@ -503,7 +514,7 @@ const Page = () => {
                     ]}
                   />
                 </Grid>
-                <Grid size={4}>
+                <Grid size={{ xs: 12, md: 4 }}>
                   <CippPropertyList
                     propertyItems={[
                       { label: 'City', value: signInData.location.city },
@@ -866,6 +877,7 @@ const Page = () => {
                 icon: <PencilIcon />,
                 label: 'Edit Group',
                 link: '/identity/administration/groups/edit?groupId=[id]&groupType=[calculatedGroupType]',
+                pinned: true,
               },
             ],
             data: userMemberOf?.filter(
@@ -883,7 +895,16 @@ const Page = () => {
       ]
     : []
 
-  const roleMembershipItems = userMemberOf
+  // Role assignments come from the PIM-aware endpoint so the card can tell a permanent
+  // assignment from an eligible or time-bound one and offer the secure-direction actions.
+  const roleAssignmentRows = roleAssignments.data ?? []
+  const permanentRoleCount = roleAssignmentRows.filter(
+    (row) => row.AssignmentType === 'Permanent'
+  ).length
+  const eligibleRoleCount = roleAssignmentRows.filter(
+    (row) => row.AssignmentType === 'Eligible'
+  ).length
+  const roleMembershipItems = roleAssignments.isSuccess
     ? [
         {
           id: 1,
@@ -891,53 +912,23 @@ const Page = () => {
             cardLabelBoxHeader: <AdminPanelSettings />,
           },
           text: 'Admin Roles',
-          subtext: 'List of roles the user is a member of',
-          statusText: ` ${
-            userMemberOf?.filter(
-              (item) =>
-                item?.['@odata.type'] === '#microsoft.graph.directoryRole'
-            ).length
-          } Role(s)`,
-          statusColor: 'info.main',
+          subtext:
+            'Directory roles held by this user and how they are assigned (permanent, eligible or time-bound)',
+          statusText: ` ${roleAssignmentRows.length} assignment(s) - ${permanentRoleCount} permanent, ${eligibleRoleCount} eligible`,
+          statusColor: permanentRoleCount > 0 ? 'warning.main' : 'info.main',
           table: {
             title: 'Admin Roles',
             hideTitle: true,
-            actions: [
-              {
-                label: 'Remove from Role',
-                type: 'POST',
-                icon: <PersonRemove />,
-                url: '/api/ExecRemoveAdminRole',
-                data: {
-                  RoleId: 'id',
-                  RoleName: 'displayName',
-                  Users: 'Users',
-                },
-                confirmText:
-                  'Are you sure you want to remove this user from [displayName]?',
-                allowResubmit: true,
-                onSuccess: refreshFunction,
-                condition: (row) => canWriteRole && !!row?.id,
-              },
+            actions: roleAssignmentActions,
+            data: roleAssignmentRows,
+            simpleColumns: [
+              'RoleDisplayName',
+              'AssignmentType',
+              'MemberType',
+              'Scope',
+              'EndDateTime',
+              'PolicySummary',
             ],
-            data: userMemberOf
-              ?.filter(
-                (item) =>
-                  item?.['@odata.type'] === '#microsoft.graph.directoryRole'
-              )
-              .map((role) => ({
-                ...role,
-                Users: [
-                  {
-                    value: userRequest.data?.[0]?.id ?? userId,
-                    label:
-                      userRequest.data?.[0]?.userPrincipalName ??
-                      userRequest.data?.[0]?.displayName ??
-                      userId,
-                  },
-                ],
-              })),
-            simpleColumns: ['displayName', 'description'],
             refreshFunction: refreshFunction,
           },
         },
@@ -972,6 +963,7 @@ const Page = () => {
                   icon: <EyeIcon />,
                   label: 'View Device',
                   link: `/endpoint/MEM/devices/device?deviceId=[id]&tenantFilter=${userSettingsDefaults.currentTenant}`,
+                  pinned: true,
                 },
               ],
             },
@@ -1005,29 +997,61 @@ const Page = () => {
     <HeaderedTabbedLayout
       tabOptions={tabOptions}
       title={title}
+      titleControl={
+        <CippUserSwitcher
+          title={title}
+          currentUserId={userId}
+          tenantFilter={router.query.tenantFilter ?? userSettingsDefaults.currentTenant}
+        />
+      }
       actions={userActions}
       actionsData={data}
       subtitle={subtitle}
       isFetching={userRequest.isLoading}
     >
-      {userRequest.isLoading && <CippFormSkeleton layout={[2, 1, 2, 2]} />}
+      {/* The loading state is the loaded page's own scaffold with each card in its
+          skeleton form — generic form-row bars looked nothing like what replaces them
+          and left the rest of the viewport empty. */}
+      {userRequest.isLoading && (
+        <Box sx={{ flexGrow: 1, py: { xs: 2, md: 4 } }}>
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 12, lg: 4 }}>
+              <CippUserInfoCard isFetching />
+            </Grid>
+            <Grid size={{ xs: 12, lg: 8 }}>
+              <Stack spacing={3}>
+                {['Latest Logon', 'Applied Conditional Access Policies', 'Multi-Factor Authentication Devices', 'Memberships'].map(
+                  (section) => (
+                    <Fragment key={section}>
+                      <Typography variant="h6">{section}</Typography>
+                      <CippBannerListCard isFetching items={[]} />
+                    </Fragment>
+                  )
+                )}
+              </Stack>
+            </Grid>
+          </Grid>
+        </Box>
+      )}
       {userRequest.isSuccess && (
         <Box
           sx={{
             flexGrow: 1,
-            py: 4,
+            py: { xs: 2, md: 4 },
           }}
         >
           <CippHead title={title} />
           <Grid container spacing={2}>
-            <Grid size={4}>
+            {/* Stacked below lg — at phone widths a 4/8 split leaves both columns too
+                narrow to hold a label, breaking the text one word per line. */}
+            <Grid size={{ xs: 12, lg: 4 }}>
               <CippUserInfoCard
                 user={data}
                 tenant={userSettingsDefaults.currentTenant}
                 isFetching={userRequest.isLoading}
               />
             </Grid>
-            <Grid size={8}>
+            <Grid size={{ xs: 12, lg: 8 }}>
               <Stack spacing={3}>
                 <Typography variant="h6">Latest Logon</Typography>
                 <CippBannerListCard
@@ -1082,7 +1106,7 @@ const Page = () => {
                   isCollapsible={true}
                 />
                 <CippBannerListCard
-                  isFetching={userBulkRequest.isPending}
+                  isFetching={roleAssignments.isFetching}
                   items={roleMembershipItems}
                   isCollapsible={true}
                 />

@@ -12,6 +12,7 @@ import {
   CleaningServices,
   Assessment,
   FolderShared,
+  Launch,
   ManageAccounts,
   PersonSearch,
   RestoreFromTrash,
@@ -31,6 +32,33 @@ import { CippEditSitePropertiesForm } from '../../../components/CippComponents/C
 import { CippSiteRecycleBinDialog } from '../../../components/CippComponents/CippSiteRecycleBinDialog'
 import { CippLibraryPermissionsDialog } from '../../../components/CippComponents/CippLibraryPermissionsDialog'
 import { CippCheckUserAccessDialog } from '../../../components/CippComponents/CippCheckUserAccessDialog'
+import { CippSharePointQuotaCard } from '../../../components/CippCards/CippSharePointQuotaCard'
+import {
+  CippAnonymizedReportAlert,
+  isReportAnonymized,
+  useReportAnonymized,
+} from '../../../components/CippComponents/CippAnonymizedReportAlert'
+
+const percentOf = (part, whole) => {
+  const p = Number(part)
+  const w = Number(whole)
+  if (!Number.isFinite(p) || !Number.isFinite(w) || w <= 0) return null
+  return Math.round((p / w) * 1000) / 10
+}
+
+const siteUsedBytes = (row) => {
+  const bytes = Number(row?.storageUsedInBytes)
+  if (Number.isFinite(bytes)) return bytes
+  const gb = Number(row?.storageUsedInGigabytes)
+  if (Number.isFinite(gb)) return gb * 1024 ** 3
+  return null
+}
+
+/** Enrich ListSiteBrowser library rows with % of parent site used (storman-style). */
+const mapLibraryPercentOfSite = (library, { parentRow } = {}) => ({
+  ...library,
+  percentOfSite: percentOf(library?.storageUsedInBytes, siteUsedBytes(parentRow)),
+})
 
 // Friendly labels for the SharePoint version cleanup (trim) job progress fields.
 const VERSION_CLEANUP_LABELS = {
@@ -148,6 +176,33 @@ const Page = () => {
     allowToggle: true,
     defaultCached: true,
     allowAllTenantSync: true,
+  })
+
+  // Anonymization: M365 "conceal names in reports" hashes owner fields in Graph usage reports.
+  // Live data and caches synced after the admin RLD migration use real SiteOwner* values from
+  // SPO admin; this banner only matters for legacy cached rows that still came from Graph D7.
+  const anonymizedReport = useReportAnonymized({
+    url: reportDB.resolvedApiUrl,
+    data: reportDB.resolvedApiData,
+    queryKey: reportDB.resolvedQueryKey,
+    check: (rows) => isReportAnonymized(rows, ['ownerPrincipalName', 'ownerDisplayName']),
+  })
+
+  // Usage metrics come from SPO admin RenderAdminListData (live and after cache sync). A populated
+  // site list with blank storage/activity on every row means the usage merge failed, admin access
+  // is partial, or the report cache predates a successful SharePointSiteUsage sync.
+  const noUsageMetrics = useReportAnonymized({
+    url: reportDB.resolvedApiUrl,
+    data: reportDB.resolvedApiData,
+    queryKey: reportDB.resolvedQueryKey,
+    check: (rows) =>
+      rows.length > 0 &&
+      rows.every(
+        (site) =>
+          site?.storageUsedInBytes == null &&
+          site?.fileCount == null &&
+          site?.lastActivityDate == null
+      ),
   })
 
   const actions = [
@@ -357,48 +412,54 @@ const Page = () => {
         <CippEditSitePropertiesForm formHook={formHook} row={row} tenantFilter={tenantFilter} />
       ),
       customDataformatter: (row, action, formData) => {
-        const siteRow = Array.isArray(row) ? row[0] : row
-        const isGroupSite = siteRow?.rootWebTemplate === 'Group'
         const v = (x) => (x && typeof x === 'object' && 'value' in x ? x.value : x)
-        const payload = {
-          tenantFilter: siteRow.Tenant ?? tenantFilter,
-          SiteUrl: siteRow.webUrl,
-          SharingCapability: v(formData.SharingCapability),
-          DefaultSharingLinkType: v(formData.DefaultSharingLinkType),
-          DefaultLinkPermission: v(formData.DefaultLinkPermission),
-          LockState: v(formData.LockState),
-        }
-        if (!isGroupSite) {
-          payload.Title = formData.Title
-          payload.SharingDomainRestrictionMode = v(formData.SharingDomainRestrictionMode)
-          payload.OverrideTenantAnonymousLinkExpirationPolicy =
-            !!formData.OverrideTenantAnonymousLinkExpirationPolicy
-          payload.InheritVersionPolicyFromTenant = !!formData.InheritVersionPolicyFromTenant
-        }
-        if (!isGroupSite && v(formData.SharingDomainRestrictionMode) === 'AllowList') {
-          payload.SharingAllowedDomainList = formData.SharingAllowedDomainList
-        }
-        if (!isGroupSite && v(formData.SharingDomainRestrictionMode) === 'BlockList') {
-          payload.SharingBlockedDomainList = formData.SharingBlockedDomainList
-        }
-        if (!isGroupSite && formData.OverrideTenantAnonymousLinkExpirationPolicy) {
-          payload.AnonymousLinkExpirationInDays = parseInt(
-            formData.AnonymousLinkExpirationInDays ?? 0,
-            10
-          )
-        }
-        const storageMax = parseInt(formData.StorageMaximumLevel, 10)
-        const storageWarn = parseInt(formData.StorageWarningLevel, 10)
-        if (!isNaN(storageMax) && storageMax > 0) payload.StorageMaximumLevel = storageMax
-        if (!isNaN(storageWarn) && storageWarn > 0) payload.StorageWarningLevel = storageWarn
-        if (!isGroupSite && !formData.InheritVersionPolicyFromTenant) {
-          payload.EnableAutoExpirationVersionTrim = !!formData.EnableAutoExpirationVersionTrim
-          if (!formData.EnableAutoExpirationVersionTrim) {
-            payload.MajorVersionLimit = parseInt(formData.MajorVersionLimit ?? 0, 10)
-            payload.ExpireVersionsAfterDays = parseInt(formData.ExpireVersionsAfterDays ?? 0, 10)
+        // isGroupSite is evaluated per site: a selection can mix group-backed and classic
+        // sites, and the group-backed ones reject the properties guarded below.
+        const formatRow = (siteRow) => {
+          const isGroupSite = siteRow?.rootWebTemplate === 'Group'
+          const payload = {
+            tenantFilter: siteRow.Tenant ?? tenantFilter,
+            SiteUrl: siteRow.webUrl,
+            SharingCapability: v(formData.SharingCapability),
+            DefaultSharingLinkType: v(formData.DefaultSharingLinkType),
+            DefaultLinkPermission: v(formData.DefaultLinkPermission),
+            LockState: v(formData.LockState),
           }
+          if (!isGroupSite) {
+            payload.Title = formData.Title
+            payload.SharingDomainRestrictionMode = v(formData.SharingDomainRestrictionMode)
+            payload.OverrideTenantAnonymousLinkExpirationPolicy =
+              !!formData.OverrideTenantAnonymousLinkExpirationPolicy
+            payload.InheritVersionPolicyFromTenant = !!formData.InheritVersionPolicyFromTenant
+          }
+          if (!isGroupSite && v(formData.SharingDomainRestrictionMode) === 'AllowList') {
+            payload.SharingAllowedDomainList = formData.SharingAllowedDomainList
+          }
+          if (!isGroupSite && v(formData.SharingDomainRestrictionMode) === 'BlockList') {
+            payload.SharingBlockedDomainList = formData.SharingBlockedDomainList
+          }
+          if (!isGroupSite && formData.OverrideTenantAnonymousLinkExpirationPolicy) {
+            payload.AnonymousLinkExpirationInDays = parseInt(
+              formData.AnonymousLinkExpirationInDays ?? 0,
+              10
+            )
+          }
+          const storageMax = parseInt(formData.StorageMaximumLevel, 10)
+          const storageWarn = parseInt(formData.StorageWarningLevel, 10)
+          if (!isNaN(storageMax) && storageMax > 0) payload.StorageMaximumLevel = storageMax
+          if (!isNaN(storageWarn) && storageWarn > 0) payload.StorageWarningLevel = storageWarn
+          if (!isGroupSite && !formData.InheritVersionPolicyFromTenant) {
+            payload.EnableAutoExpirationVersionTrim = !!formData.EnableAutoExpirationVersionTrim
+            if (!formData.EnableAutoExpirationVersionTrim) {
+              payload.MajorVersionLimit = parseInt(formData.MajorVersionLimit ?? 0, 10)
+              payload.ExpireVersionsAfterDays = parseInt(formData.ExpireVersionsAfterDays ?? 0, 10)
+            }
+          }
+          return payload
         }
-        return payload
+        // When multiple rows are selected, row is an array. Returning an array
+        // makes CippApiDialog send one request per row (bulk request mode).
+        return Array.isArray(row) ? row.map(formatRow) : formatRow(row)
       },
       multiPost: false,
       allowResubmit: true,
@@ -514,6 +575,7 @@ const Page = () => {
         />
       ),
       multiPost: false,
+      hideBulk: true,
     },
     {
       label: 'Delete Site',
@@ -647,6 +709,7 @@ const Page = () => {
         />
       ),
       multiPost: false,
+      hideBulk: true,
     },
     {
       label: 'Check Cleanup Job Status',
@@ -661,6 +724,7 @@ const Page = () => {
         />
       ),
       multiPost: false,
+      hideBulk: true,
     },
   ]
 
@@ -686,8 +750,50 @@ const Page = () => {
     size: 'lg', // Make the offcanvas extra large
   }
 
+  const librarySubTables = [
+    {
+      id: 'libraries',
+      header: 'Libraries',
+      label: 'View libraries',
+      table: {
+        title: 'Top-level libraries — [displayName]',
+        queryKey: `SiteBrowserLibs-${tenantFilter}-[siteId]-[webUrl]`,
+        api: {
+          url: '/api/ListSiteBrowser',
+          data: {
+            SiteUrl: '[webUrl]',
+          },
+          dataKey: 'Results',
+        },
+        dataMap: mapLibraryPercentOfSite,
+        defaultSorting: [{ id: 'storageUsedInBytes', desc: true }],
+        simpleColumns: [
+          'displayName',
+          'siteType',
+          'fileCount',
+          'storageUsedInBytes',
+          'versionEstimateBytes',
+          'percentOfSite',
+          'webUrl',
+        ],
+        actions: [
+          {
+            label: 'Open library',
+            link: '[webUrl]',
+            external: true,
+            target: '_blank',
+            icon: <Launch fontSize="small" />,
+            multiPost: false,
+            condition: (row) => Boolean(row?.webUrl),
+          },
+        ],
+      },
+    },
+  ]
+
   const simpleColumns = [
     ...reportDB.cacheColumns.filter((c) => c === 'Tenant'),
+    'libraries',
     'displayName',
     'createdDateTime',
     'ownerPrincipalName',
@@ -712,7 +818,6 @@ const Page = () => {
       >
         Bulk Add Sites
       </Button>
-      {reportDB.controls}
     </Stack>
   )
 
@@ -726,7 +831,26 @@ const Page = () => {
         actions={actions}
         offCanvas={offCanvas}
         simpleColumns={simpleColumns}
+        subTables={librarySubTables}
         cardButton={pageActions}
+        dataSourceControls={reportDB.controls}
+        tableFilter={
+          <>
+            <CippSharePointQuotaCard />
+            <CippAnonymizedReportAlert show={anonymizedReport}>
+              Site owner names in this report are pseudo-anonymised because Microsoft 365 report
+              anonymization is enabled for this tenant. Re-sync the SharePoint Sites report after
+              enabling usernames in reports, or switch to live data for current SPO admin values.
+            </CippAnonymizedReportAlert>
+            {!anonymizedReport && noUsageMetrics && (
+              <Alert severity="info">
+                Usage metrics (activity, storage, file count) are missing for every site. The site
+                list may still be complete. Sync the SharePoint Sites report or verify SharePoint
+                admin access for this tenant.
+              </Alert>
+            )}
+          </>
+        }
       />
       {reportDB.syncDialog}
     </>

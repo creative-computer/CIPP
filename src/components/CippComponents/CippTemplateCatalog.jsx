@@ -58,6 +58,7 @@ export const templateTypeLabels = {
   AppTemplate: 'Application',
   ContactTemplate: 'Contact',
   JITAdminTemplate: 'JIT Admin',
+  PIMRoleSettingsTemplate: 'PIM Role Settings',
   UserDefaultTemplate: 'User Defaults',
   AssignmentFilterTemplate: 'Assignment Filter',
   IntuneReusableSettingTemplate: 'Intune Reusable Setting',
@@ -320,7 +321,7 @@ const CompactTemplateList = memo(
                 mb: 1,
                 bgcolor: 'background.paper',
                 '&:hover': { bgcolor: 'action.hover' },
-                pr: 20,
+                pr: { xs: 6, md: 20 },
               }}
             >
               <Checkbox

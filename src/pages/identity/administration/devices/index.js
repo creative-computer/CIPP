@@ -1,7 +1,14 @@
 import { CippTablePage } from "../../../../components/CippComponents/CippTablePage.jsx";
 import { Layout as DashboardLayout } from "../../../../layouts/index.js"; // had to add an extra path here because I added an extra folder structure. We should switch to absolute pathing so we dont have to deal with relative.
 import { useSettings } from "../../../../hooks/use-settings";
-import { Visibility, CheckCircleOutline, Block, VpnKey, DeleteForever } from "@mui/icons-material";
+import {
+  Visibility,
+  CheckCircleOutline,
+  Block,
+  VpnKey,
+  DeleteForever,
+  Password,
+} from "@mui/icons-material";
 
 const Page = () => {
   const pageTitle = "Devices";
@@ -11,6 +18,7 @@ const Page = () => {
     {
       label: "View in Entra",
       link: `https://entra.microsoft.com/${tenantFilter}/#view/Microsoft_AAD_Devices/DeviceDetailsMenuBlade/~/Properties/objectId/[id]/deviceId/`,
+      pinned: true,
       color: "info",
       icon: <Visibility />,
       target: "_blank",
@@ -53,6 +61,18 @@ const Page = () => {
       confirmText: "Are you sure you want to retrieve the BitLocker keys?",
       multiPost: false,
       icon: <VpnKey />,
+    },
+    {
+      label: "Retrieve LAPS password",
+      type: "POST",
+      url: "/api/ExecGetLocalAdminPassword",
+      data: {
+        GUID: "deviceId",
+      },
+      confirmText: "Are you sure you want to retrieve the local admin password for [displayName]?",
+      multiPost: false,
+      condition: (row) => row.operatingSystem === "Windows",
+      icon: <Password />,
     },
     {
       label: "Delete Device",

@@ -136,7 +136,7 @@ const AiToolDetail = ({ row }) => {
         {properties
           .filter((prop) => prop.value !== undefined && prop.value !== null && prop.value !== '')
           .map((prop) => (
-            <Grid size={{ md: 4, xs: 6 }} key={prop.label}>
+            <Grid size={{ md: 4, xs: 12 }} key={prop.label}>
               <Typography variant="subtitle2" color="text.secondary">
                 {prop.label}
               </Typography>
@@ -203,6 +203,19 @@ const syncRows = [
   { Name: 'OAuth2PermissionGrants' },
 ]
 
+// CippChartCard colors slices by index (green, orange, red, neutral), but byRisk comes back
+// from the API in alphabetical order. Reorder to Low, Medium, High so severity lines up with
+// color; anything unrecognized sorts last and picks up the neutral color.
+const RISK_SEVERITY_ORDER = ['low', 'medium', 'high']
+export const sortByRiskSeverity = (byRisk) =>
+  [...byRisk].sort((a, b) => {
+    const severityIndex = (item) => {
+      const index = RISK_SEVERITY_ORDER.indexOf((item.risk ?? '').toLowerCase())
+      return index === -1 ? RISK_SEVERITY_ORDER.length : index
+    }
+    return severityIndex(a) - severityIndex(b)
+  })
+
 const Page = () => {
   const currentTenant = useSettings().currentTenant
   const syncDialog = useDialog()
@@ -219,7 +232,7 @@ const Page = () => {
   const data = shadowAi.data ?? {}
   const summary = data.summary ?? {}
   const byCategory = data.byCategory ?? []
-  const byRisk = data.byRisk ?? []
+  const byRisk = sortByRiskSeverity(data.byRisk ?? [])
   const topTools = data.topTools ?? []
   const needsSync = shadowAi.isSuccess && !summary.intuneSynced && !summary.entraSynced
   const showCharts = shadowAi.isFetching || byCategory.length > 0
@@ -500,3 +513,4 @@ const Page = () => {
 Page.getLayout = (page) => <DashboardLayout>{page}</DashboardLayout>
 
 export default Page
+

@@ -9,6 +9,7 @@ import {
   Email,
   ForwardToInbox,
   GroupAdd,
+  Launch,
   LockClock,
   LockPerson,
   LockReset,
@@ -28,6 +29,7 @@ import { useSettings } from '../../hooks/use-settings.js'
 import { usePermissions } from '../../hooks/use-permissions'
 import { Tooltip, Box, Divider, Typography, Alert, Skeleton, Link, IconButton } from '@mui/material'
 import CippFormComponent from './CippFormComponent'
+import { MfaVerifyForm } from './CippMfaVerifyForm'
 import { CippFormCondition } from './CippFormCondition'
 import { useWatch } from 'react-hook-form'
 import { ApiGetCall } from '../../api/ApiCall'
@@ -310,7 +312,23 @@ const TemporaryAccessPassForm = ({ formControl, row }) => {
 }
 
 // Separate component for Out of Office form to avoid hook issues
-const OutOfOfficeForm = ({ formControl }) => {
+export const OutOfOfficeForm = ({ formControl, row }) => {
+  const tenantFilter = useSettings().currentTenant
+  const rowData = Array.isArray(row) ? row[0] : row
+  const tenant = tenantFilter === 'AllTenants' && rowData?.Tenant ? rowData.Tenant : tenantFilter
+  // Only prefill for a single selected user; with multiple users there is no single current value
+  const singleUserUpn =
+    (!Array.isArray(row) || row.length === 1) && rowData?.userPrincipalName
+      ? rowData.userPrincipalName
+      : null
+
+  const currentOoO = ApiGetCall({
+    url: '/api/ListOoO',
+    data: { UserId: singleUserUpn, tenantFilter: tenant },
+    queryKey: `ListOoO-${singleUserUpn}-${tenant}`,
+    waiting: !!singleUserUpn,
+  })
+
   // Send the browser's IANA timezone so the API can display local times in the response
   useEffect(() => {
     try {
@@ -320,6 +338,35 @@ const OutOfOfficeForm = ({ formControl }) => {
     }
   }, [])
 
+  useEffect(() => {
+    const data = currentOoO.data
+    if (!data?.AutoReplyState) return
+    // Deferred a tick: CippApiDialog resets the form in a mount effect that runs after
+    // this child effect, so an immediate setValue would be wiped when the query is cached
+    const timer = setTimeout(() => {
+      formControl.setValue('AutoReplyState', {
+        label: data.AutoReplyState,
+        value: data.AutoReplyState,
+      })
+      formControl.setValue('InternalMessage', data.InternalMessage || '')
+      formControl.setValue('ExternalMessage', data.ExternalMessage || '')
+      formControl.setValue(
+        'StartTime',
+        data.StartTime ? new Date(data.StartTime).getTime() / 1000 : null
+      )
+      formControl.setValue('EndTime', data.EndTime ? new Date(data.EndTime).getTime() / 1000 : null)
+      formControl.setValue('CreateOOFEvent', data.CreateOOFEvent === true)
+      formControl.setValue('OOFEventSubject', data.OOFEventSubject || '')
+      formControl.setValue(
+        'AutoDeclineFutureRequestsWhenOOF',
+        data.AutoDeclineFutureRequestsWhenOOF === true
+      )
+      formControl.setValue('DeclineEventsForScheduledOOF', data.DeclineEventsForScheduledOOF === true)
+      formControl.setValue('DeclineMeetingMessage', data.DeclineMeetingMessage || '')
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [currentOoO.dataUpdatedAt])
+
   // Watch the Auto Reply State value
   const autoReplyState = useWatch({
     control: formControl.control,
@@ -328,6 +375,18 @@ const OutOfOfficeForm = ({ formControl }) => {
 
   // Calculate if date fields should be disabled
   const areDateFieldsDisabled = autoReplyState?.value !== 'Scheduled'
+
+  if (singleUserUpn && currentOoO.isLoading) {
+    return (
+      <>
+        <Skeleton variant="rounded" height={40} />
+        <Skeleton variant="rounded" height={40} />
+        <Skeleton variant="rounded" height={40} />
+        <Skeleton variant="rounded" height={80} />
+        <Skeleton variant="rounded" height={80} />
+      </>
+    )
+  }
 
   return (
     <>
@@ -473,6 +532,7 @@ export const useCippUserActions = () => {
       //tested
       label: 'View User',
       link: '/identity/administration/users/user?userId=[id]',
+      pinned: true,
       multiPost: false,
       icon: <EyeIcon />,
       color: 'success',
@@ -481,10 +541,21 @@ export const useCippUserActions = () => {
       //tested
       label: 'Edit User',
       link: '/identity/administration/users/user/edit?userId=[id]',
+      pinned: true,
       icon: <Edit />,
       color: 'success',
       target: '_self',
       condition: () => canWriteUser,
+    },
+    {
+      label: 'View in Entra',
+      link: 'https://entra.microsoft.com/[Tenant]/#view/Microsoft_AAD_UsersAndTenants/UserProfileMenuBlade/~/overview/userId/[id]',
+      pinned: true,
+      icon: <Launch />,
+      color: 'info',
+      target: '_blank',
+      multiPost: false,
+      external: true,
     },
     {
       label: 'Create Template from User',
@@ -579,7 +650,8 @@ export const useCippUserActions = () => {
       icon: <PhonelinkLock />,
       url: '/api/ExecSendPush',
       data: { UserEmail: 'userPrincipalName' },
-      confirmText: 'Are you sure you want to send an MFA request to [userPrincipalName]?',
+      children: ({ formHook, row }) => <MfaVerifyForm formControl={formHook} row={row} />,
+      confirmText: 'Send an MFA request to [userPrincipalName]?',
       multiPost: false,
     },
     {
@@ -654,7 +726,9 @@ export const useCippUserActions = () => {
         userId: 'userPrincipalName',
         tenantFilter: 'Tenant',
       },
-      children: ({ formHook: formControl }) => <OutOfOfficeForm formControl={formControl} />,
+      children: ({ formHook: formControl, row }) => (
+        <OutOfOfficeForm formControl={formControl} row={row} />
+      ),
       confirmText: 'Are you sure you want to set the out of office?',
       multiPost: false,
       condition: () => canWriteMailbox,
@@ -712,10 +786,14 @@ export const useCippUserActions = () => {
           validators: { required: 'Please select at least one group' },
           api: {
             url: '/api/ListGroups',
-            labelField: (option) =>
-              option?.calculatedGroupType
-                ? `${option.displayName} (${option.calculatedGroupType})`
-                : (option?.displayName ?? ''),
+            labelField: (option) => {
+              const name = option?.mail
+                ? `${option.displayName} - ${option.mail}`
+                : (option?.displayName ?? '')
+              return option?.calculatedGroupType
+                ? `${name} (${option.calculatedGroupType})`
+                : name
+            },
             valueField: 'id',
             addedField: {
               groupType: 'groupType',
@@ -899,6 +977,19 @@ export const useCippUserActions = () => {
         },
       ],
       confirmText: 'Are you sure you want to reset the password for [userPrincipalName]?',
+      multiPost: false,
+      condition: () => canWriteUser,
+    },
+    {
+      label: 'Require Password Change at Next Logon',
+      type: 'POST',
+      icon: <Password />,
+      url: '/api/ExecRequirePasswordChange',
+      data: {
+        ID: 'id',
+      },
+      confirmText:
+        'Require [userPrincipalName] to change their password at next logon? This does not reset the password. Not supported for directory-synced accounts.',
       multiPost: false,
       condition: () => canWriteUser,
     },

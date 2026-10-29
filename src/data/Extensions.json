@@ -488,7 +488,7 @@
     "logoDark": "/assets/integrations/ninjaone_dark.png",
     "forceSyncButton": true,
     "description": "Enable the NinjaOne integration to sync documentation and monitor device compliance.",
-    "helpText": "This integration allows you to populate custom fields with Tenant information, monitor device compliance state, document other items and generate relationships inside NinjaOne.",
+    "helpText": "This integration allows you to populate custom fields with Tenant information, monitor device compliance state, document other items and generate relationships inside NinjaOne. Credential sync creates its Secure device custom fields automatically; they can be remapped on the Field Mapping tab.",
     "links": [
       {
         "name": "NinjaOne Documentation",
@@ -575,6 +575,30 @@
       },
       {
         "type": "switch",
+        "name": "NinjaOne.IncludeLAPS",
+        "label": "Sync Windows LAPS passwords to NinjaOne",
+        "helperText": "Individual tenants can be excluded from password data on the Tenant Mapping tab.",
+        "condition": {
+          "field": "NinjaOne.Enabled",
+          "compareType": "is",
+          "compareValue": true,
+          "action": "disable"
+        }
+      },
+      {
+        "type": "switch",
+        "name": "NinjaOne.IncludeBitLocker",
+        "label": "Sync BitLocker recovery keys to NinjaOne",
+        "helperText": "Individual tenants can be excluded from password data on the Tenant Mapping tab.",
+        "condition": {
+          "field": "NinjaOne.Enabled",
+          "compareType": "is",
+          "compareValue": true,
+          "action": "disable"
+        }
+      },
+      {
+        "type": "switch",
         "name": "NinjaOne.CveSyncEnabled",
         "label": "Enable Automated CVE Sync",
         "condition": {
@@ -595,6 +619,17 @@
           "compareType": "is",
           "compareValue": true
         }
+      },
+      {
+        "type": "LocaleSelect",
+        "name": "NinjaOne.Locale",
+        "label": "Date and number format (default English (United Kingdom))",
+        "condition": {
+          "field": "NinjaOne.Enabled",
+          "compareType": "is",
+          "compareValue": true,
+          "action": "disable"
+        }
       }
     ],
     "mappingRequired": true,
@@ -611,7 +646,7 @@
     "logoDark": "/assets/integrations/hudu_dark.png",
     "forceSyncButton": true,
     "description": "Enable the Hudu integration to sync documentation",
-    "helpText": "This integration allows you to populate custom asset layouts with Tenant information, monitor device compliance state, document other items and generate relationships inside Hudu.",
+    "helpText": "This integration allows you to populate custom asset layouts with Tenant information, monitor device compliance state, document other items and generate relationships inside Hudu. The Hudu API key must have Password Access enabled to synchronize confidential credential fields.",
     "links": [
       {
         "name": "Hudu Documentation",
@@ -673,6 +708,30 @@
         }
       },
       {
+        "type": "switch",
+        "name": "Hudu.IncludeLAPS",
+        "label": "Sync Windows LAPS passwords to Hudu",
+        "helperText": "Individual tenants can be excluded from password data on the Tenant Mapping tab.",
+        "condition": {
+          "field": "Hudu.Enabled",
+          "compareType": "is",
+          "compareValue": true,
+          "action": "disable"
+        }
+      },
+      {
+        "type": "switch",
+        "name": "Hudu.IncludeBitLocker",
+        "label": "Sync BitLocker recovery keys to Hudu",
+        "helperText": "Individual tenants can be excluded from password data on the Tenant Mapping tab.",
+        "condition": {
+          "field": "Hudu.Enabled",
+          "compareType": "is",
+          "compareValue": true,
+          "action": "disable"
+        }
+      },
+      {
         "type": "textField",
         "name": "Hudu.ExcludeSerials",
         "label": "Exclude device serials (comma separated)",
@@ -709,6 +768,17 @@
         "type": "switch",
         "name": "Hudu.HideEmptyRoles",
         "label": "Hide Empty Roles in Magic Dash",
+        "condition": {
+          "field": "Hudu.Enabled",
+          "compareType": "is",
+          "compareValue": true,
+          "action": "disable"
+        }
+      },
+      {
+        "type": "LocaleSelect",
+        "name": "Hudu.Locale",
+        "label": "Date and number format (default English (United Kingdom))",
         "condition": {
           "field": "Hudu.Enabled",
           "compareType": "is",
@@ -775,6 +845,7 @@
     ],
     "mappingRequired": true,
     "fieldMapping": true,
+    "autoMapSyncApi": true,
     "showSyncButton": true
   },
   {

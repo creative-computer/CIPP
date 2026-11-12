@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState } from "react";
+import { act } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders } from "../../test-utils";
 
@@ -27,8 +28,10 @@ const idleMutation = vi.hoisted(() => ({
   reset: () => {},
 }));
 
+const featureFlags = vi.hoisted(() => ({ data: [], isFetching: false, isSuccess: true }));
+
 vi.mock("../../../src/api/ApiCall", () => ({
-  ApiGetCall: () => pendingPermissions,
+  ApiGetCall: ({ url }) => (url === "/api/ListFeatureFlags" ? featureFlags : pendingPermissions),
   ApiGetCallWithPagination: () => idlePagination,
   ApiPostCall: () => idleMutation,
 }));
@@ -50,5 +53,76 @@ describe("CippRoleAddEdit render stability", () => {
     expect(loggedMaxDepth).toBe(false);
 
     consoleError.mockRestore();
+  });
+});
+
+// Regression: the "Set All Permissions" effect used to fire on mount with an undefined
+// selection. With the permissions list already cached that overwrote the loaded role
+// with "Cat.Obj.undefined" for every row.
+const loadedPermissions = { CIPP: { Alert: { Read: [], ReadWrite: [] } } };
+const technicianRole = {
+  RowKey: "technician",
+  Permissions: { CIPPAlert: "CIPP.Alert.Read" },
+  PermissionRules: { Include: ["CIPP.Alert.Read"], Exclude: [] },
+};
+
+describe("CippRoleAddEdit custom role advanced view", () => {
+  it("shows the saved permission levels instead of undefined", async () => {
+    pendingPermissions.data = loadedPermissions;
+    pendingPermissions.isFetching = false;
+    pendingPermissions.isSuccess = true;
+    idlePagination.data = { pages: [[technicianRole]] };
+    idlePagination.isSuccess = true;
+
+    const { findByText, queryByText } = renderWithProviders(
+      <CippRoleAddEdit selectedRole="technician" />
+    );
+
+    expect(await findByText("CIPP.Alert.Read")).toBeTruthy();
+    expect(queryByText(/\.undefined/)).toBeNull();
+  });
+
+  // Cold cache: the role list resolves before the permission list. Loading the role
+  // then built the grid from zero categories and the summary stayed blank.
+  it("shows the saved permission levels when the permission list arrives last", async () => {
+    pendingPermissions.data = undefined;
+    pendingPermissions.isFetching = true;
+    pendingPermissions.isSuccess = false;
+    idlePagination.data = { pages: [[technicianRole]] };
+    idlePagination.isSuccess = true;
+
+    // Re-render inside the providers once the mocked query flips to success.
+    let bump;
+    const Harness = () => {
+      const [, setTick] = useState(0);
+      bump = () => setTick((n) => n + 1);
+      return <CippRoleAddEdit selectedRole="technician" />;
+    };
+    const { findByText } = renderWithProviders(<Harness />);
+
+    pendingPermissions.data = loadedPermissions;
+    pendingPermissions.isFetching = false;
+    pendingPermissions.isSuccess = true;
+    act(() => bump());
+
+    expect(await findByText("CIPP.Alert.Read")).toBeTruthy();
+  });
+});
+
+describe("CippRoleAddEdit tenant group selector setting", () => {
+  const groupSwitch = (getByRole) =>
+    getByRole("switch", { name: "Block tenant groups in the tenant selector" });
+
+  it("cannot be toggled while the TenantGroupSelector feature flag is off", () => {
+    featureFlags.data = [{ Id: "TenantGroupSelector", Enabled: false }];
+    const { getByRole, getByText } = renderWithProviders(<CippRoleAddEdit />);
+    expect(groupSwitch(getByRole).disabled).toBe(true);
+    expect(getByText(/Turn on Tenant Groups in Tenant Selector/)).toBeTruthy();
+  });
+
+  it("can be toggled once the flag is on", () => {
+    featureFlags.data = [{ Id: "TenantGroupSelector", Enabled: true }];
+    const { getByRole } = renderWithProviders(<CippRoleAddEdit />);
+    expect(groupSwitch(getByRole).disabled).toBe(false);
   });
 });
